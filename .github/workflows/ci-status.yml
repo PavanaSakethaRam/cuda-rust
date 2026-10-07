@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+---
+name: CI status
+
+# One status for the whole repository, so the README needs one badge.
+#
+# Badges are per workflow file, and the two pipelines have to stay separate
+# for now: ci.yml (SIMT and the shared host crates) runs on GitHub-hosted
+# runners on push and pull_request; cutile-rs.yml (Tile) runs on NVIDIA
+# self-hosted runners, which cannot run on pull_request events, so it
+# triggers on push to main and to the copy-pr-bot mirror branches.
+#
+# This workflow runs whenever either of them completes on main, looks up the
+# latest completed push run of both, and fails if either failed. The badge in
+# README.md points here. To cover another pipeline, add its workflow name to
+# the trigger list and its file name to the loop below.
+on:
+  workflow_run:
+    workflows: [CI, cutile-rs-pr]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  status:
+    name: combined CI status on main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report the latest main result of each pipeline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for workflow in ci.yml cutile-rs.yml; do
+            result="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?branch=main&event=push&status=completed&per_page=1" \
+              --jq '.workflow_runs[0] | if . == null then "none -" else "\(.conclusion) \(.html_url)" end')"
+            echo "${workflow}: ${result}"
+            case "${result%% *}" in
+              success|skipped|neutral|cancelled|none) ;;
+              *) failed=1 ;;
+            esac
+          done
+          exit "${failed}"
